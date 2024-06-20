@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    
+    tools {
+        maven 'Maven-3.9.8'
+    }
+    
+    environment {
+        PATH = "$PATH:/usr/local/bin"
+    }
+    
+    stages {
+        stage('Download application.properties from S3') {
+            steps {
+                echo 'Downloading application.properties from S3...'
+                withCredentials([
+                    string(credentialsId: 'iam_access_key', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'iam_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        aws s3 cp s3://hahahah12/application.properties application.properties
+                    '''
+                }
+                echo 'app properties downloaded successfully from bucket'
+            }
+        }
+        
+        stage('Parse application.properties') {
+            steps {
+                script {
+                    def props = readProperties file: 'application.properties'
+                    env.MYSQL_HOST = props['spring.datasource.url'].split('/')[2].split(':')[0]
+                    env.MYSQL_PORT = props['spring.datasource.url'].split('/')[2].split(':')[1]
+                    env.MYSQL_DB = props['spring.datasource.url'].split('/')[3].split('\\?')[0]
+                    env.MYSQL_USER = props['spring.datasource.username']
+                    env.MYSQL_PASSWORD = props['spring.datasource.password']
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                echo 'Started building your Maven project!!'
+            }
+        }
+        
+        stage('Git-clone') {
+            steps {
+                echo 'Cloning your backend code'
+                git branch: 'main', url: 'https://github.com/akshayyyyyyyy123/backend.git'
+            }
+        }
+        
+        stage('Maven build') {
+            steps {
+                echo 'Building your pom.xml file.....'
+                sh 'mvn clean package'
+            }
+        }
+        
+        stage('Test MySQL Connection') {
+            steps {
+                echo 'Testing MySQL connection...'
+                sh '''
+                    mysql -h ${MYSQL_HOST} -P ${MYSQL_PORT} -u ${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SHOW DATABASES;"
+                '''
+            }
+        }
+        
+           stage('List Tables in EmployeeSchema') {
+            steps {
+                echo 'Listing all tables in EmployeeSchema...'
+                script {
+                    def tableNames = sh(script: """
+                        mysql -h ${MYSQL_HOST} -P ${MYSQL_PORT} -u ${MYSQL_USER} -p${MYSQL_PASSWORD} -D ${MYSQL_DB} -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${MYSQL_DB}';"
+                    """, returnStdout: true).trim()
+                    
+                    echo "Tables in EmployeeSchema:\n${tableNames}"
+                }
+            }
+        }
+    }
+}
